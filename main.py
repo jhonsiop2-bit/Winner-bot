@@ -1,33 +1,18 @@
 import requests
 import base64
 import time
-import hashlib
-import re
-import os
-
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 
 # ================= CONFIG =================
-APP_ID = os.getenv("APP_ID")
-SECRET = os.getenv("SECRET")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+APP_ID = "Najebnaj-ProHunt-PRD-8f606d196-11a90e20"
+SECRET = "PRD-f606d196bb94-a8c6-4d14-8214-2a6a"
+TELEGRAM_TOKEN = "8657814491:AAGTTLZXtkTQm750CuUznuNUUFRYfT3K4Ng"
+CHAT_ID = "5989878697"
 
 SCAN_TIME = 120
 MIN_PRICE = 8
 MAX_PRICE = 60
 
-# ================= STORAGE =================
-seen_products = set()
-
-# ================= SELENIUM =================
-options = Options()
-options.add_argument("--headless")
-options.add_argument("--no-sandbox")
-options.add_argument("--disable-dev-shm-usage")
-
-driver = webdriver.Chrome(options=options)
+seen = set()
 
 # ================= TOKEN =================
 token = None
@@ -77,7 +62,7 @@ def search(keyword):
             headers={"Authorization": f"Bearer {t}"},
             params={
                 "q": keyword,
-                "limit": 25,
+                "limit": 20,
                 "filter": f"price:[{MIN_PRICE}..{MAX_PRICE}]"
             }
         )
@@ -87,76 +72,42 @@ def search(keyword):
     except:
         return []
 
-# ================= SCRAPE =================
-def get_real_data(url):
-    try:
-        driver.get(url)
-        time.sleep(2)
+# ================= SCORE =================
+def score_item(price, fb):
+    score = 0
 
-        html = driver.page_source.lower()
+    if 15 <= price <= 50:
+        score += 3
 
-        sold = 0
-        m = re.search(r'(\d+)\s*sold', html)
-        if m:
-            sold = int(m.group(1))
+    if 200 <= fb <= 2000:
+        score += 4
 
-        trending = "trending" in html
-
-        return sold, trending
-
-    except:
-        return 0, False
+    return score
 
 # ================= FILTER =================
 def kill_bad(title):
     bad = [
         "apple","samsung","sony","nike",
         "used","refurbished","vintage",
-        "bulk","lot","wholesale",
-        "adapter","case","cover"
+        "bulk","lot","wholesale"
     ]
     title = title.lower()
     return any(w in title for w in bad)
-
-# ================= SCORE =================
-def score_item(price, fb, sold, trending):
-    score = 0
-
-    if 15 <= price <= 50:
-        score += 2
-
-    if 200 <= fb <= 910:
-        score += 4
-
-    if sold >= 5:
-        score += 5
-    elif sold >= 2:
-        score += 3
-
-    if trending:
-        score += 3
-
-    return score
-
-# ================= KEYWORDS =================
-KEYWORDS = [
-    "back pain relief",
-    "foot pain relief",
-    "neck stretcher",
-    "pet hair remover",
-    "dog bed calming",
-    "car scratch remover",
-    "vegetable chopper",
-    "meat chopper",
-    "laptop stand",
-    "phone holder"
-]
 
 # ================= MAIN =================
 def run():
     print("🔥 SCANNING...")
 
-    for kw in KEYWORDS:
+    keywords = [
+        "back pain relief",
+        "pet hair remover",
+        "car scratch remover",
+        "kitchen gadget",
+        "laptop stand",
+        "phone holder"
+    ]
+
+    for kw in keywords:
         items = search(kw)
 
         for item in items:
@@ -170,24 +121,24 @@ def run():
                 if kill_bad(title):
                     continue
 
-                if not (200 <= fb <= 910):
+                key = title[:50]
+                if key in seen:
                     continue
 
-                sold, trending = get_real_data(link)
-                score = score_item(price, fb, sold, trending)
+                score = score_item(price, fb)
 
-                if score >= 8:
-                    msg = f"""🔥 WINNER FOUND
+                if score >= 5:
+                    msg = f"""🔥 WINNER
 
 {title}
 
 💰 Price: {price}$
-📦 Sold: {sold}
-⭐ Score: {score}
+⭐ Seller Score: {fb}
 
 {link}
 """
                     send(msg)
+                    seen.add(key)
                     print("SENT:", title[:40])
 
             except:
@@ -195,7 +146,7 @@ def run():
 
 # ================= LOOP =================
 if __name__ == "__main__":
-    send("🚀 GOLD BOT STARTED")
+    send("🚀 BOT STARTED")
 
     while True:
         try:
