@@ -3,42 +3,36 @@ import base64
 import time
 import hashlib
 import re
+import os
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.options import Options
 
 # ================= CONFIG =================
-APP_ID  = "Najebnaj-ProHunt-PRD-8f606d196-11a90e20"
-SECRET  = "PRD-f606d196bb94-a8c6-4d14-8214-2a6a"
-
-TELEGRAM_TOKEN = "8657814491:AAGTTLZXtkTQm750CuUznuNUUFRYfT3K4Ng"
-CHAT_ID        = "5989878697"
+APP_ID = os.getenv("APP_ID")
+SECRET = os.getenv("SECRET")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 SCAN_TIME = 120
 MIN_PRICE = 8
 MAX_PRICE = 60
 
 # ================= STORAGE =================
-try:
-    with open("seen.txt", "r") as f:
-        seen_products = set(f.read().splitlines())
-except:
-    seen_products = set()
-
-phase = 1
-token = None
-token_exp = 0
+seen_products = set()
 
 # ================= SELENIUM =================
 options = Options()
 options.add_argument("--headless")
-options.add_argument("--disable-blink-features=AutomationControlled")
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
 
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+driver = webdriver.Chrome(options=options)
 
 # ================= TOKEN =================
+token = None
+token_exp = 0
+
 def get_token():
     global token, token_exp
 
@@ -66,7 +60,7 @@ def send(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg[:4000]}
+            data={"chat_id": CHAT_ID, "text": msg}
         )
     except:
         pass
@@ -84,11 +78,12 @@ def search(keyword):
             params={
                 "q": keyword,
                 "limit": 25,
-                "sort": "bestMatch",
                 "filter": f"price:[{MIN_PRICE}..{MAX_PRICE}]"
             }
         )
+
         return r.json().get("itemSummaries", [])
+
     except:
         return []
 
@@ -101,14 +96,9 @@ def get_real_data(url):
         html = driver.page_source.lower()
 
         sold = 0
-
-        m1 = re.search(r'(\d+)\s*sold', html)
-        if m1:
-            sold = int(m1.group(1))
-
-        m2 = re.search(r'(\d+)\s*sold\s*today', html)
-        if m2:
-            sold += int(m2.group(1))
+        m = re.search(r'(\d+)\s*sold', html)
+        if m:
+            sold = int(m.group(1))
 
         trending = "trending" in html
 
@@ -127,15 +117,6 @@ def kill_bad(title):
     ]
     title = title.lower()
     return any(w in title for w in bad)
-
-# ================= AI =================
-def ai_decision(score, sold, trending):
-    if sold >= 30 and trending:
-        return "🔥 HOT WINNER"
-    elif sold >= 10:
-        return "⚠️ TEST"
-    else:
-        return "❌ SKIP"
 
 # ================= SCORE =================
 def score_item(price, fb, sold, trending):
@@ -157,47 +138,14 @@ def score_item(price, fb, sold, trending):
 
     return score
 
-# ================= AI GENERATOR =================
-def generate_listing(title):
-    clean = title.lower()
-
-    # TITLE SAFE
-    safe_title = clean.replace("for", "").replace("with", "")
-    safe_title = safe_title[:70] + " Multi-Use Tool"
-    safe_title = safe_title[:80]
-
-    # DESCRIPTION
-    description = (
-        "🔥 Upgrade Your Daily Life\n\n"
-        "This product solves real problems easily and efficiently.\n\n"
-        "✅ Easy to use\n"
-        "✅ High quality\n"
-        "✅ Saves time\n"
-        "✅ Smart design\n\n"
-        "Perfect for everyday use."
-    )
-
-    # IMAGE PROMPTS
-    prompts = {
-        "main": f"Ultra realistic product photo of {title}, black premium background, bold text, 5:4 ratio",
-        "lifestyle1": f"Real person using {title} at home, natural light",
-        "lifestyle2": f"Close-up usage of {title}, showing benefit",
-        "features": f"Infographic of {title} features, icons, clean design",
-        "usage": f"Step by step using {title}, realistic hands",
-        "variants": f"All color variations of {title}, displayed clean"
-    }
-
-    return safe_title, description, prompts
-
 # ================= KEYWORDS =================
 KEYWORDS = [
     "back pain relief",
     "foot pain relief",
     "neck stretcher",
     "pet hair remover",
-    "dog calming bed",
+    "dog bed calming",
     "car scratch remover",
-    "sink clog remover",
     "vegetable chopper",
     "meat chopper",
     "laptop stand",
@@ -206,11 +154,7 @@ KEYWORDS = [
 
 # ================= MAIN =================
 def run():
-    global phase
-
-    print(f"\n🔥 PHASE {phase}")
-
-    results = []
+    print("🔥 SCANNING...")
 
     for kw in KEYWORDS:
         items = search(kw)
@@ -229,65 +173,29 @@ def run():
                 if not (200 <= fb <= 910):
                     continue
 
-                key = " ".join(title.lower().split()[:3])
-                if key in seen_products:
-                    continue
-
                 sold, trending = get_real_data(link)
-
-                print(title[:40], "| SOLD:", sold, "| TREND:", trending)
-
-                if sold < 2:
-                    continue
-
                 score = score_item(price, fb, sold, trending)
-                decision = ai_decision(score, sold, trending)
 
-                if decision == "❌ SKIP":
-                    continue
+                if score >= 8:
+                    msg = f"""🔥 WINNER FOUND
 
-                safe_title, desc, prompts = generate_listing(title)
+{title}
 
-                profit = round(price * 0.4, 2)
+💰 Price: {price}$
+📦 Sold: {sold}
+⭐ Score: {score}
 
-                results.append((score, title, price, profit, sold, trending, link, fb, key, decision, safe_title, desc, prompts))
+{link}
+"""
+                    send(msg)
+                    print("SENT:", title[:40])
 
             except:
                 continue
 
-    if not results:
-        send("⚠️ No winners now")
-        return
-
-    results = sorted(results, reverse=True)
-
-    send(f"🚀 PHASE {phase} RESULTS 🚀")
-
-    for r in results[:3]:
-        msg = (
-            f"{r[9]}\n\n"
-            f"🧠 TITLE:\n{r[10]}\n\n"
-            f"📦 DESCRIPTION:\n{r[11]}\n\n"
-            f"🎨 IMAGE MAIN:\n{r[12]['main']}\n\n"
-            f"🔥 PRODUCT:\n{r[1][:60]}\n"
-            f"💰 ${r[2]} | Profit ${r[3]}\n"
-            f"📈 Sold: {r[4]} | Trend: {r[5]}\n\n"
-            f"{r[6]}"
-        )
-
-        send(msg)
-
-        seen_products.add(r[8])
-        with open("seen.txt", "a") as f:
-            f.write(r[8] + "\n")
-
-        time.sleep(1)
-
-    phase += 1
-
 # ================= LOOP =================
 if __name__ == "__main__":
-    send("🚀 FINAL AI BOT STARTED")
+    send("🚀 GOLD BOT STARTED")
 
     while True:
         try:
